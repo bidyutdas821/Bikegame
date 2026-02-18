@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mountain POV Rider</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; }
+        
+        #ui-layer { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            display: flex; justify-content: center; align-items: center; 
+            background: rgba(0,0,0,0.7); z-index: 100;
+        }
+        .modal { 
+            background: white; padding: 30px; border-radius: 20px; 
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        input { padding: 12px; width: 80%; margin: 15px 0; border: 2px solid #2d5a27; border-radius: 8px; }
+        button { padding: 15px 30px; background: #2d5a27; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; }
+
+        #hud { position: absolute; top: 10px; left: 10px; color: white; font-weight: bold; pointer-events: none; display: none; z-index: 50;}
+        #controls { 
+            position: absolute; bottom: 20px; width: 100%; display: none; 
+            justify-content: space-between; padding: 0 20px; box-sizing: border-box; 
+        }
+        .btn { 
+            width: 75px; height: 75px; background: rgba(255,255,255,0.2); 
+            border: 2px solid white; border-radius: 50%; color: white; 
+            display: flex; align-items: center; justify-content: center; 
+            user-select: none; font-size: 1.2em; font-weight: bold;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="start-modal" class="modal">
+            <h2>Enter player name:</h2>
+            <input type="text" id="playerName" placeholder="Rider Name" maxlength="10">
+            <button id="startBtn">START MOUNTAIN RIDE</button>
+        </div>
+    </div>
+
+    <div id="hud">
+        <div id="dist">0m</div>
+    </div>
+
+    <div id="controls">
+        <div style="display:flex; gap:15px;">
+            <div class="btn" id="btnLeft">LEFT</div>
+            <div class="btn" id="btnRight">RIGHT</div>
+        </div>
+        <div class="btn" id="btnGas" style="background:rgba(45, 90, 39, 0.6)">GAS</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let width, height, gameActive = false, playerName = "Rider";
+let speed = 0, distance = 0, playerX = 0;
+let trees = [], mountains = [];
+let keys = {};
+
+function initGame() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    
+    // Generate Mountains for the background
+    for(let i=0; i<10; i++) {
+        mountains.push({
+            x: Math.random() * width * 2 - width,
+            w: 400 + Math.random() * 600,
+            h: 200 + Math.random() * 300,
+            color: `hsl(160, 20%, ${30 + Math.random() * 20}%)`
+        });
+    }
+
+    // Generate trees for the road side
+    for(let i=0; i<50; i++) {
+        trees.push({ z: i * 40, side: Math.random() > 0.5 ? 1.5 : -1.5 });
+    }
+    requestAnimationFrame(loop);
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+function update() {
+    if(!gameActive) return;
+
+    // Movement
+    if(keys['ArrowUp'] || keys['btnGas']) speed = Math.min(speed + 0.4, 55);
+    else speed = Math.max(speed - 0.2, 0);
+
+    if(keys['ArrowLeft'] || keys['btnLeft']) playerX -= 0.05 * (speed/40);
+    if(keys['ArrowRight'] || keys['btnRight']) playerX += 0.05 * (speed/40);
+
+    distance += speed * 0.1;
+    document.getElementById('dist').innerText = Math.floor(distance) + "m";
+
+    // Update parallax scenery
+    trees.forEach(t => {
+        t.z -= speed * 0.5;
+        if(t.z < 0) t.z = 1000;
+    });
+
+    // Stay on road limits
+    playerX = Math.max(Math.min(playerX, 2.5), -2.5);
+}
+
+function draw() {
+    ctx.clearRect(0,0,width,height);
+    
+    // Sky
+    ctx.fillStyle = "#87CEEB"; 
+    ctx.fillRect(0,0,width,height);
+
+    const horizon = height / 2;
+
+    // Draw Mountains (Static Parallax)
+    mountains.forEach(m => {
+        ctx.fillStyle = m.color;
+        ctx.beginPath();
+        let xPos = m.x - (playerX * 50); // Slight parallax based on steering
+        ctx.moveTo(xPos, horizon);
+        ctx.lineTo(xPos + m.w/2, horizon - m.h);
+        ctx.lineTo(xPos + m.w, horizon);
+        ctx.fill();
+    });
+
+    // Grass
+    ctx.fillStyle = "#3e7a36"; 
+    ctx.fillRect(0, horizon, width, height/2);
+
+    // Draw Road
+    for(let i=0; i<80; i++) {
+        let z = i * 15;
+        let p1 = project(z, horizon);
+        let p2 = project(z + 15, horizon);
+        
+        ctx.fillStyle = (Math.floor((i + distance*0.05) % 6) < 3) ? "#444" : "#383838";
+        ctx.beginPath();
+        ctx.moveTo(p1.x - p1.w, p1.y);
+        ctx.lineTo(p2.x - p2.w, p2.y);
+        ctx.lineTo(p2.x + p2.w, p2.y);
+        ctx.lineTo(p1.x + p1.w, p1.y);
+        ctx.fill();
+
+        // Road Side Lines
+        ctx.fillStyle = "#CCC";
+        ctx.fillRect(p1.x - p1.w - 5, p1.y, 5, p2.y - p1.y);
+        ctx.fillRect(p1.x + p1.w, p1.y, 5, p2.y - p1.y);
+    }
+
+    // Draw Forest Trees
+    trees.sort((a,b) => b.z - a.z).forEach(t => {
+        let p = project(t.z, horizon, t.side);
+        if(p.scale <= 0) return;
+        
+        ctx.fillStyle = "#1e3d1a";
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - 25*p.scale, p.y);
+        ctx.lineTo(p.x, p.y - 100*p.scale);
+        ctx.lineTo(p.x + 25*p.scale, p.y);
+        ctx.fill();
+    });
+
+    // POV Handlebar/Hood shadow (Optional visual)
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(width/2, height, 200, 100, 0, 0, Math.PI*2);
+    ctx.fill();
+}
+
+function project(z, horizon, xOffset = 0) {
+    let scale = 120 / (z + 1);
+    let x = (width/2) + (xOffset - playerX) * scale * 100;
+    let y = horizon + (scale * 30);
+    let w = scale * 120;
+    return { x, y, w, scale };
+}
+
+// Control Event Listeners
+const setKey = (k, v) => keys[k] = v;
+['btnLeft', 'btnRight', 'btnGas'].forEach(id => {
+    const el = document.getElementById(id);
+    el.onpointerdown = (e) => { e.preventDefault(); setKey(id, true); };
+    el.onpointerup = (e) => { e.preventDefault(); setKey(id, false); };
+});
+window.onkeydown = e => setKey(e.code, true);
+window.onkeyup = e => setKey(e.code, false);
+
+document.getElementById('startBtn').onclick = () => {
+    playerName = document.getElementById('playerName').value || "Rider";
+    document.getElementById('ui-layer').classList.add('hidden');
+    document.getElementById('hud').style.display = 'block';
+    document.getElementById('controls').style.display = 'flex';
+    gameActive = true;
+};
+
+initGame();
+</script>
+</body>
+</html>
