@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mountain Forest Rider - Audio Edition</title>
+    <title>Mountain Forest Rider - Fixed</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
@@ -22,12 +22,13 @@
             padding: 12px 30px; background: #2d5a27; color: white; 
             border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px;
         }
-        button:hover { background: #3e7a36; transform: scale(1.05); transition: 0.2s; }
+        button:hover { background: #3e7a36; transform: scale(1.05); }
         #hud { 
             position: absolute; top: 20px; left: 20px; color: #1e3d1a; 
             font-weight: bold; text-shadow: 1px 1px 0px white; pointer-events: none;
             display: none; 
         }
+        #high-score-tag { font-size: 0.7em; color: #666; margin-top: 5px; }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -36,10 +37,11 @@
     <div id="ui-layer">
         <div id="start-modal" class="modal">
             <h2 style="color: #2d5a27; margin-top: 0;">🌲 Forest Rider</h2>
-            <p>Enter name & click to enable audio:</p>
+            <p>Enter name to start:</p>
             <input type="text" id="playerName" placeholder="Your Name" maxlength="12">
+            <div id="high-score-tag"></div>
             <br>
-            <button onclick="startGame()">Start & Play Sound</button>
+            <button id="startBtn">Start Race</button>
         </div>
 
         <div id="gameover-modal" class="modal hidden">
@@ -60,83 +62,70 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// --- Audio Controller (Web Audio API) ---
+// --- Audio Controller ---
 const AudioController = {
-    ctx: null,
-    engineOsc: null,
-    engineGain: null,
-
+    ctx: null, engineOsc: null, engineGain: null,
     init() {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Setup Engine Sound
         this.engineOsc = this.ctx.createOscillator();
         this.engineGain = this.ctx.createGain();
         this.engineOsc.type = 'sawtooth';
         this.engineOsc.frequency.setValueAtTime(50, this.ctx.currentTime);
         this.engineGain.gain.setValueAtTime(0, this.ctx.currentTime);
-        
         this.engineOsc.connect(this.engineGain);
         this.engineGain.connect(this.ctx.destination);
         this.engineOsc.start();
     },
-
     updateEngine(speed) {
-        if (!this.ctx) return;
-        const pitch = 50 + (Math.abs(speed) * 15);
-        const volume = Math.min(0.05 + (Math.abs(speed) * 0.01), 0.15);
+        if (!this.ctx || this.ctx.state === 'suspended') return;
+        const pitch = 40 + (Math.abs(speed) * 18);
+        const volume = Math.min(0.02 + (Math.abs(speed) * 0.01), 0.1);
         this.engineOsc.frequency.setTargetAtTime(pitch, this.ctx.currentTime, 0.1);
         this.engineGain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.1);
     },
-
     playCrash() {
         if (!this.ctx) return;
         this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
         const noise = this.ctx.createBufferSource();
-        const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.5, this.ctx.sampleRate);
+        const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.4, this.ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-        
         noise.buffer = buffer;
-        const noiseGain = this.ctx.createGain();
-        noiseGain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-        noise.connect(noiseGain);
-        noiseGain.connect(this.ctx.destination);
+        const g = this.ctx.createGain();
+        g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+        noise.connect(g); g.connect(this.ctx.destination);
         noise.start();
     }
 };
 
-// --- Game Logic ---
+// --- Game Constants & Variables ---
 let width, height, score = 0, keys = {}, gameActive = false, playerName = "Rider";
-let bike = { x: 100, y: 0, vX: 0, vY: 0, rotation: 0, vRotation: 0, radius: 12, leanSpeed: 0.004, accel: 0.2 };
 let terrain = [], trees = [], mountains = [];
+let bike = { x: 150, y: 0, vX: 0, vY: 0, rotation: 0, vRotation: 0, radius: 12, leanSpeed: 0.005, accel: 0.22 };
 
-function startGame() {
-    const input = document.getElementById('playerName').value;
-    if(input) playerName = input;
-    document.getElementById('display-name').innerText = playerName.toUpperCase();
-    document.getElementById('ui-layer').classList.add('hidden');
-    document.getElementById('hud').style.display = 'block';
-    
-    AudioController.init(); // Initialize audio context on user click
-    gameActive = true;
-}
-
+// --- Initialization ---
 function init() {
     width = canvas.width = window.innerWidth;
     height = canvas.height = window.innerHeight;
-    for (let i = 0; i < 20; i++) addTerrainSection(i * 100);
-    for (let i = 0; i < 15; i++) mountains.push({ x: i * 500, h: 200 + Math.random() * 200, w: 400 + Math.random() * 400 });
+    
+    // Display high score if it exists
+    const savedScore = localStorage.getItem('forestRiderHiScore');
+    if(savedScore) document.getElementById('high-score-tag').innerText = "Best: " + savedScore + "m";
+
+    // Build world
+    for (let i = 0; i < 30; i++) addTerrainSection(i * 100);
+    for (let i = 0; i < 15; i++) mountains.push({ x: i * 600, h: 150 + Math.random() * 250, w: 500 + Math.random() * 500 });
+    
     bike.y = getYAt(bike.x) - 50;
     requestAnimationFrame(gameLoop);
 }
 
 function addTerrainSection(x) {
-    const lastY = terrain.length > 0 ? terrain[terrain.length - 1].y : height - 200;
-    const newY = lastY + (Math.random() - 0.5) * 110;
-    const clampedY = Math.max(height - 450, Math.min(height - 100, newY));
+    const lastY = terrain.length > 0 ? terrain[terrain.length - 1].y : height - 250;
+    const newY = lastY + (Math.random() - 0.5) * 120;
+    const clampedY = Math.max(height - 450, Math.min(height - 120, newY));
     terrain.push({ x: x, y: clampedY });
-    if (Math.random() > 0.6) trees.push({ x: x, type: Math.floor(Math.random() * 2) });
+    if (Math.random() > 0.5) trees.push({ x: x, type: Math.floor(Math.random() * 2) });
 }
 
 function getYAt(x) {
@@ -149,23 +138,17 @@ function getYAt(x) {
     return height;
 }
 
-window.addEventListener('keydown', e => keys[e.code] = true);
-window.addEventListener('keyup', e => keys[e.code] = false);
+// --- Logic Update ---
+function update() {
+    if (!gameActive) return;
 
-function gameLoop() {
-    if (gameActive) updatePhysics();
-    draw();
-    requestAnimationFrame(gameLoop);
-}
-
-function updatePhysics() {
     if (keys['KeyW'] || keys['ArrowUp']) bike.vX += bike.accel;
     if (keys['KeyA'] || keys['ArrowLeft']) bike.vRotation -= bike.leanSpeed;
     if (keys['KeyD'] || keys['ArrowRight']) bike.vRotation += bike.leanSpeed;
 
-    bike.vY += 0.22;
-    bike.vX *= 0.985;
-    bike.vRotation *= 0.96;
+    bike.vY += 0.25; // Gravity
+    bike.vX *= 0.99; // Air Resistance
+    bike.vRotation *= 0.95;
     bike.x += bike.vX;
     bike.y += bike.vY;
     bike.rotation += bike.vRotation;
@@ -175,42 +158,39 @@ function updatePhysics() {
     const groundY = getYAt(bike.x);
     const normRot = ((bike.rotation + Math.PI) % (Math.PI * 2)) - Math.PI;
 
-    if (Math.abs(normRot) > 2.2 && bike.y + bike.radius >= groundY - 5) {
-        gameOver();
+    // Crash Check
+    if (Math.abs(normRot) > 2.1 && bike.y + bike.radius >= groundY - 3) {
+        endGame();
     }
 
+    // Ground Physics
     if (bike.y + bike.radius > groundY) {
         bike.y = groundY - bike.radius;
-        bike.vY *= -0.1;
-        const nextGroundY = getYAt(bike.x + 5);
-        const slope = Math.atan2(nextGroundY - groundY, 5);
-        bike.rotation += (slope - bike.rotation) * 0.15;
+        bike.vY *= -0.15;
+        const nextY = getYAt(bike.x + 5);
+        const slope = Math.atan2(nextY - groundY, 5);
+        bike.rotation += (slope - bike.rotation) * 0.2;
     }
 
+    // Camera follow & procedural generation
     if (bike.x > width * 0.4) {
         const diff = bike.x - width * 0.4;
         bike.x = width * 0.4;
-        score += Math.floor(diff / 5);
-        document.getElementById('distance-counter').innerText = Math.floor(score/10) + "m";
+        score += diff * 0.1;
+        document.getElementById('distance-counter').innerText = Math.floor(score) + "m";
+        
         terrain.forEach(p => p.x -= diff);
         trees.forEach(t => t.x -= diff);
-        mountains.forEach(m => m.x -= diff * 0.2); 
+        mountains.forEach(m => m.x -= diff * 0.25);
+
         if (terrain[terrain.length-1].x < width + 200) addTerrainSection(terrain[terrain.length-1].x + 100);
     }
 }
 
-function gameOver() {
-    if (!gameActive) return;
-    gameActive = false;
-    AudioController.playCrash();
-    document.getElementById('ui-layer').classList.remove('hidden');
-    document.getElementById('start-modal').classList.add('hidden');
-    document.getElementById('gameover-modal').classList.remove('hidden');
-    document.getElementById('final-stats').innerText = `${playerName}, you covered ${Math.floor(score/10)} meters!`;
-}
-
+// --- Drawing ---
 function draw() {
     ctx.clearRect(0, 0, width, height);
+
     // Mountains
     ctx.fillStyle = "#A3C4BC";
     mountains.forEach(m => {
@@ -220,26 +200,81 @@ function draw() {
         ctx.lineTo(m.x + m.w, height);
         ctx.fill();
     });
+
     // Trees
     trees.forEach(t => {
         const ty = getYAt(t.x);
         ctx.fillStyle = "#1e3d1a";
         ctx.beginPath();
         ctx.moveTo(t.x, ty);
-        ctx.lineTo(t.x - 12, ty);
-        ctx.lineTo(t.x, ty - 35);
-        ctx.lineTo(t.x + 12, ty);
+        ctx.lineTo(t.x - 15, ty);
+        ctx.lineTo(t.x, ty - 45);
+        ctx.lineTo(t.x + 15, ty);
         ctx.fill();
     });
+
     // Ground
     ctx.beginPath();
     ctx.moveTo(terrain[0].x, terrain[0].y);
     for (let i = 1; i < terrain.length; i++) ctx.lineTo(terrain[i].x, terrain[i].y);
-    ctx.lineTo(width, height);
-    ctx.lineTo(0, height);
-    ctx.fillStyle = "#3e7a36";
-    ctx.fill();
+    ctx.lineTo(width, height); ctx.lineTo(0, height);
+    ctx.fillStyle = "#3e7a36"; ctx.fill();
+
     // Bike
     ctx.save();
-    ctx.translate(bike.
+    ctx.translate(bike.x, bike.y);
+    ctx.rotate(bike.rotation);
+    ctx.strokeStyle = "#222"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(0, -12); ctx.lineTo(12, 0); ctx.stroke();
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); ctx.arc(-12, 0, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(12, 0, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// --- Control Flow ---
+document.getElementById('startBtn').addEventListener('click', () => {
+    const input = document.getElementById('playerName').value;
+    if(input) playerName = input;
     
+    document.getElementById('display-name').innerText = playerName.toUpperCase();
+    document.getElementById('ui-layer').classList.add('hidden');
+    document.getElementById('hud').style.display = 'block';
+    
+    AudioController.init();
+    if (AudioController.ctx.state === 'suspended') AudioController.ctx.resume();
+    
+    gameActive = true;
+});
+
+function endGame() {
+    gameActive = false;
+    AudioController.playCrash();
+    
+    const finalDist = Math.floor(score);
+    const hiScore = localStorage.getItem('forestRiderHiScore') || 0;
+    if (finalDist > hiScore) localStorage.setItem('forestRiderHiScore', finalDist);
+
+    document.getElementById('ui-layer').classList.remove('hidden');
+    document.getElementById('start-modal').classList.add('hidden');
+    document.getElementById('gameover-modal').classList.remove('hidden');
+    document.getElementById('final-stats').innerText = `${playerName}, you rode ${finalDist}m!`;
+}
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+window.addEventListener('resize', () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+});
+
+init();
+</script>
+</body>
+</html>
