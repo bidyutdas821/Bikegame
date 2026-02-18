@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mountain Forest Rider</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        
+        /* UI Overlay Styles */
+        #ui-layer { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            display: flex; justify-content: center; align-items: center; 
+            background: rgba(0,0,0,0.4); z-index: 10;
+        }
+        .modal { 
+            background: white; padding: 30px; border-radius: 15px; 
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 300px;
+        }
+        input { padding: 10px; width: 80%; margin: 10px 0; border: 2px solid #2d5a27; border-radius: 5px; }
+        button { 
+            padding: 10px 25px; background: #2d5a27; color: white; 
+            border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background: #3e7a36; }
+
+        #hud { 
+            position: absolute; top: 20px; left: 20px; color: #2d5a27; 
+            font-weight: bold; text-shadow: 1px 1px 0px white; pointer-events: none;
+            display: none; /* Hidden until game starts */
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="start-modal" class="modal">
+            <h2 style="color: #2d5a27;">Forest Rider</h2>
+            <p>Enter your name to start:</p>
+            <input type="text" id="playerName" placeholder="Rider Name" maxlength="12">
+            <br>
+            <button onclick="startGame()">Start Race</button>
+        </div>
+
+        <div id="gameover-modal" class="modal hidden">
+            <h2 style="color: #d9534f;">CRASHED!</h2>
+            <p id="final-stats"></p>
+            <button onclick="location.reload()">Try Again</button>
+        </div>
+    </div>
+
+    <div id="hud">
+        <div style="font-size: 0.8em; opacity: 0.8;" id="display-name">RIDER</div>
+        <div id="distance-counter" style="font-size: 2.5em;">0m</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Game State ---
+let width, height;
+let score = 0;
+let keys = {};
+let gameActive = false;
+let playerName = "Rider";
+
+let bike = {
+    x: 100, y: 0, vX: 0, vY: 0,
+    rotation: 0, vRotation: 0,
+    radius: 12, leanSpeed: 0.004, accel: 0.18
+};
+
+let terrain = [];
+let trees = [];
+let mountains = [];
+
+function startGame() {
+    const input = document.getElementById('playerName').value;
+    if(input) playerName = input;
+    document.getElementById('display-name').innerText = playerName.toUpperCase();
+    document.getElementById('ui-layer').classList.add('hidden');
+    document.getElementById('hud').style.display = 'block';
+    gameActive = true;
+}
+
+function init() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    
+    // Initial procedural setup
+    for (let i = 0; i < 20; i++) addTerrainSection(i * 100);
+    for (let i = 0; i < 15; i++) mountains.push({ x: i * 500, h: 200 + Math.random() * 200, w: 400 + Math.random() * 400 });
+
+    bike.y = getYAt(bike.x) - 50;
+    requestAnimationFrame(gameLoop);
+}
+
+function addTerrainSection(x) {
+    const lastY = terrain.length > 0 ? terrain[terrain.length - 1].y : height - 200;
+    const newY = lastY + (Math.random() - 0.5) * 100;
+    const clampedY = Math.max(height - 450, Math.min(height - 100, newY));
+    terrain.push({ x: x, y: clampedY });
+    if (Math.random() > 0.6) trees.push({ x: x, type: Math.floor(Math.random() * 2) });
+}
+
+function getYAt(x) {
+    for (let i = 0; i < terrain.length - 1; i++) {
+        if (x >= terrain[i].x && x <= terrain[i+1].x) {
+            const t = (x - terrain[i].x) / (terrain[i+1].x - terrain[i].x);
+            return terrain[i].y + t * (terrain[i+1].y - terrain[i].y);
+        }
+    }
+    return height;
+}
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+function gameLoop() {
+    if (gameActive) {
+        updatePhysics();
+    }
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+function updatePhysics() {
+    // Controls
+    if (keys['KeyW'] || keys['ArrowUp']) bike.vX += bike.accel;
+    if (keys['KeyA'] || keys['ArrowLeft']) bike.vRotation -= bike.leanSpeed;
+    if (keys['KeyD'] || keys['ArrowRight']) bike.vRotation += bike.leanSpeed;
+
+    bike.vY += 0.22; // Gravity
+    bike.vX *= 0.985; // Friction
+    bike.vRotation *= 0.96;
+
+    bike.x += bike.vX;
+    bike.y += bike.vY;
+    bike.rotation += bike.vRotation;
+
+    const groundY = getYAt(bike.x);
+    
+    // Check for Crash (if head/rotation is upside down near ground)
+    const normRot = ((
+  
