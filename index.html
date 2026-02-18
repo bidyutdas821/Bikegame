@@ -2,32 +2,35 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mountain Forest Rider</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POV Forest Rider</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', sans-serif; }
-        canvas { display: block; background: #87CEEB; }
+        body { margin: 0; padding: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; }
+        
         #ui-layer { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             display: flex; justify-content: center; align-items: center; 
-            background: rgba(0,0,0,0.6); z-index: 100;
+            background: rgba(0,0,0,0.7); z-index: 100;
         }
         .modal { 
-            background: white; padding: 40px; border-radius: 20px; 
-            text-align: center; box-shadow: 0 15px 35px rgba(0,0,0,0.4);
-            min-width: 280px;
+            background: white; padding: 30px; border-radius: 20px; 
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
-        h2 { color: #333; font-size: 1.2rem; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; }
-        input { padding: 12px; width: 90%; margin-bottom: 20px; border: 2px solid #2d5a27; border-radius: 8px; font-size: 16px; outline: none; }
-        button { 
-            padding: 15px 40px; background: #2d5a27; color: white; 
-            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 18px; width: 100%;
+        input { padding: 12px; width: 80%; margin: 15px 0; border: 2px solid #2d5a27; border-radius: 8px; }
+        button { padding: 15px 30px; background: #2d5a27; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; }
+
+        /* HUD & Mobile Controls */
+        #hud { position: absolute; top: 10px; left: 10px; color: white; font-weight: bold; pointer-events: none; display: none; }
+        #controls { 
+            position: absolute; bottom: 20px; width: 100%; display: none; 
+            justify-content: space-between; padding: 0 20px; box-sizing: border-box; 
         }
-        button:hover { background: #3e7a36; }
-        #hud { 
-            position: absolute; top: 20px; left: 20px; color: #1e3d1a; 
-            font-weight: bold; text-shadow: 1px 1px 0px white; pointer-events: none;
-            display: none; z-index: 50;
+        .btn { 
+            width: 70px; height: 70px; background: rgba(255,255,255,0.3); 
+            border: 2px solid white; border-radius: 50%; color: white; 
+            display: flex; align-items: center; justify-content: center; 
+            user-select: none; font-size: 1.5em;
         }
         .hidden { display: none !important; }
     </style>
@@ -37,20 +40,26 @@
     <div id="ui-layer">
         <div id="start-modal" class="modal">
             <h2>Enter player name:</h2>
-            <input type="text" id="playerName" placeholder="Name here..." maxlength="12">
-            <button id="startBtn">PLAY GAME</button>
+            <input type="text" id="playerName" placeholder="Name" maxlength="10">
+            <button id="startBtn">START ENGINE</button>
         </div>
-
         <div id="gameover-modal" class="modal hidden">
             <h2 style="color: #d9534f;">CRASHED!</h2>
-            <p id="final-stats" style="font-size: 1.1em; margin-bottom: 20px;"></p>
-            <button onclick="location.reload()">TRY AGAIN</button>
+            <p id="final-stats"></p>
+            <button onclick="location.reload()">RETRY</button>
         </div>
     </div>
 
     <div id="hud">
-        <div style="font-size: 0.9em; opacity: 0.7;" id="display-name">PLAYER</div>
-        <div id="distance-counter" style="font-size: 3em;">0m</div>
+        <div id="dist">0m</div>
+    </div>
+
+    <div id="controls">
+        <div style="display:flex; gap:10px;">
+            <div class="btn" id="btnLeft">L</div>
+            <div class="btn" id="btnRight">R</div>
+        </div>
+        <div class="btn" id="btnGas" style="background:rgba(45, 90, 39, 0.5)">GO</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -59,195 +68,174 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-let width, height, score = 0, keys = {}, gameActive = false, playerName = "Rider";
-let terrain = [], trees = [], mountains = [];
-let bike = { x: 150, y: 0, vX: 0, vY: 0, rotation: 0, vRotation: 0, radius: 12, leanSpeed: 0.005, accel: 0.22, initialized: false };
+let width, height, gameActive = false, playerName = "Rider";
+let speed = 0, distance = 0, playerX = 0, track = [];
+let trees = [], rocks = [];
+let keys = {};
 
-// --- Audio Controller ---
-const AudioController = {
+// --- Audio ---
+const Audio = {
     ctx: null, osc: null, gain: null,
-    setup() {
-        try {
-            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-            this.osc = this.ctx.createOscillator();
-            this.gain = this.ctx.createGain();
-            this.osc.type = 'sawtooth';
-            this.osc.frequency.setValueAtTime(40, this.ctx.currentTime);
-            this.gain.gain.setValueAtTime(0, this.ctx.currentTime);
-            this.osc.connect(this.gain);
-            this.gain.connect(this.ctx.destination);
-            this.osc.start();
-            if (this.ctx.state === 'suspended') this.ctx.resume();
-        } catch(e) { console.log("Audio fail", e); }
+    init() {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.osc = this.ctx.createOscillator();
+        this.gain = this.ctx.createGain();
+        this.osc.type = 'sawtooth';
+        this.osc.connect(this.gain);
+        this.gain.connect(this.ctx.destination);
+        this.osc.start();
     },
-    update(speed) {
-        if (!this.ctx || !gameActive) return;
-        this.osc.frequency.setTargetAtTime(40 + (speed * 15), this.ctx.currentTime, 0.1);
-        this.gain.gain.setTargetAtTime(Math.min(0.02 + (speed * 0.01), 0.1), this.ctx.currentTime, 0.1);
-    },
-    stop() { if(this.gain) this.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05); }
+    update(s) {
+        if(!this.ctx) return;
+        this.osc.frequency.setTargetAtTime(40 + s * 2, this.ctx.currentTime, 0.1);
+        this.gain.gain.setTargetAtTime(gameActive ? 0.05 : 0, this.ctx.currentTime, 0.1);
+    }
 };
 
-function buildWorld() {
+function initGame() {
     width = canvas.width = window.innerWidth;
     height = canvas.height = window.innerHeight;
-    terrain = []; trees = []; mountains = [];
     
-    // Create background mountains
-    for (let i = 0; i < 20; i++) {
-        mountains.push({ x: i * 600, h: 150 + Math.random() * 250, w: 500 + Math.random() * 600 });
+    // Create initial trees and rocks
+    for(let i=0; i<40; i++) {
+        trees.push({ z: i * 50, side: Math.random() > 0.5 ? 1 : -1 });
+        if(i % 10 === 0 && i > 5) rocks.push({ z: i * 50, x: (Math.random() - 0.5) * 1.5 });
     }
-    
-    // Create initial terrain
-    let lastY = height - 250;
-    for (let i = 0; i < 50; i++) {
-        let x = i * 100;
-        lastY = Math.max(height - 450, Math.min(height - 120, lastY + (Math.random() - 0.5) * 120));
-        terrain.push({ x: x, y: lastY });
-        if (Math.random() > 0.6) trees.push({ x: x, y: lastY });
-    }
-    
-    bike.y = getYAt(bike.x) - 50;
-    bike.initialized = true;
+    requestAnimationFrame(loop);
 }
 
-function getYAt(x) {
-    for (let i = 0; i < terrain.length - 1; i++) {
-        if (x >= terrain[i].x && x <= terrain[i+1].x) {
-            let t = (x - terrain[i].x) / (terrain[i+1].x - terrain[i].x);
-            return terrain[i].y + t * (terrain[i+1].y - terrain[i].y);
-        }
-    }
-    return height;
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
 }
 
-function updatePhysics() {
-    if (!gameActive || !bike.initialized) return;
+function update() {
+    if(!gameActive) return;
 
-    if (keys['ArrowUp'] || keys['KeyW']) bike.vX += bike.accel;
-    if (keys['ArrowLeft'] || keys['KeyA']) bike.vRotation -= bike.leanSpeed;
-    if (keys['ArrowRight'] || keys['KeyD']) bike.vRotation += bike.leanSpeed;
+    // Movement Logic
+    if(keys['ArrowUp'] || keys['btnGas']) speed = Math.min(speed + 0.5, 60);
+    else speed = Math.max(speed - 0.2, 0);
 
-    bike.vY += 0.25; 
-    bike.vX *= 0.99;
-    bike.vRotation *= 0.95;
-    bike.x += bike.vX;
-    bike.y += bike.vY;
-    bike.rotation += bike.vRotation;
+    if(keys['ArrowLeft'] || keys['btnLeft']) playerX -= 0.04 * (speed/30);
+    if(keys['ArrowRight'] || keys['btnRight']) playerX += 0.04 * (speed/30);
 
-    AudioController.update(bike.vX);
+    distance += speed * 0.1;
+    document.getElementById('dist').innerText = Math.floor(distance) + "m";
+    Audio.update(speed);
 
-    let groundY = getYAt(bike.x);
-    let normRot = ((bike.rotation + Math.PI) % (Math.PI * 2)) - Math.PI;
-
-    if (Math.abs(normRot) > 2.1 && bike.y + bike.radius >= groundY - 5) {
-        gameOver();
-    }
-
-    if (bike.y + bike.radius > groundY) {
-        bike.y = groundY - bike.radius;
-        bike.vY *= -0.1;
-        let slope = Math.atan2(getYAt(bike.x + 5) - groundY, 5);
-        bike.rotation += (slope - bike.rotation) * 0.2;
-    }
-
-    if (bike.x > width * 0.4) {
-        let diff = bike.x - width * 0.4;
-        bike.x = width * 0.4;
-        score += diff * 0.1;
-        document.getElementById('distance-counter').innerText = Math.floor(score) + "m";
-        terrain.forEach(p => p.x -= diff);
-        trees.forEach(t => t.x -= diff);
-        mountains.forEach(m => m.x -= diff * 0.25);
-        if (terrain[terrain.length-1].x < width + 200) {
-            let last = terrain[terrain.length-1];
-            let newY = Math.max(height - 450, Math.min(height - 120, last.y + (Math.random() - 0.5) * 120));
-            terrain.push({ x: last.x + 100, y: newY });
-            if (Math.random() > 0.6) trees.push({ x: last.x + 100, y: newY });
+    // Obstacle Logic
+    rocks.forEach(rock => {
+        rock.z -= speed * 0.5;
+        if(rock.z < 0) {
+            rock.z = 1000;
+            rock.x = (Math.random() - 0.5) * 1.5;
         }
-    }
+        // Collision detection
+        if(rock.z < 30 && rock.z > 0 && Math.abs(playerX - rock.x) < 0.3) {
+            gameOver();
+        }
+    });
+
+    trees.forEach(t => {
+        t.z -= speed * 0.5;
+        if(t.z < 0) t.z = 1000;
+    });
+
+    // Stay on screen
+    playerX = Math.max(Math.min(playerX, 1.8), -1.8);
 }
 
 function draw() {
-    ctx.clearRect(0, 0, width, height);
-    if (!bike.initialized) return;
+    ctx.clearRect(0,0,width,height);
+    
+    // Sky and Ground
+    ctx.fillStyle = "#87CEEB"; ctx.fillRect(0,0,width,height/2);
+    ctx.fillStyle = "#3e7a36"; ctx.fillRect(0,height/2,width,height/2);
 
-    // Draw Mountains
-    ctx.fillStyle = "#A3C4BC";
-    mountains.forEach(m => {
+    const horizon = height / 2;
+    const roadW = width * 0.8;
+
+    // Draw Road (Perspective)
+    for(let i=0; i<100; i++) {
+        let z = i * 10;
+        let p1 = project(z, horizon);
+        let p2 = project(z + 10, horizon);
+        
+        ctx.fillStyle = (Math.floor((i + distance*0.1) % 4) < 2) ? "#444" : "#333";
         ctx.beginPath();
-        ctx.moveTo(m.x, height); ctx.lineTo(m.x + m.w/2, height - m.h); ctx.lineTo(m.x + m.w, height);
+        ctx.moveTo(p1.x - p1.w, p1.y);
+        ctx.lineTo(p2.x - p2.w, p2.y);
+        ctx.lineTo(p2.x + p2.w, p2.y);
+        ctx.lineTo(p1.x + p1.w, p1.y);
         ctx.fill();
+
+        // Lane markings
+        if(i % 4 === 0) {
+            ctx.fillStyle = "white";
+            ctx.fillRect(p1.x - 2, p1.y, 4, p2.y - p1.y);
+        }
+    }
+
+    // Draw Trees & Rocks
+    [...trees, ...rocks].sort((a,b) => b.z - a.z).forEach(obj => {
+        let p = project(obj.z, horizon, obj.x || (obj.side * 2));
+        if(p.scale <= 0) return;
+        
+        if(obj.side) { // Tree
+            ctx.fillStyle = "#1e3d1a";
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - 20*p.scale, p.y); ctx.lineTo(p.x, p.y - 80*p.scale); ctx.lineTo(p.x + 20*p.scale, p.y);
+            ctx.fill();
+        } else { // Rock
+            ctx.fillStyle = "#777";
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 15 * p.scale, 0, Math.PI*2);
+            ctx.fill();
+        }
     });
 
-    // Draw Trees
-    ctx.fillStyle = "#1e3d1a";
-    trees.forEach(t => {
-        ctx.beginPath();
-        ctx.moveTo(t.x, t.y); ctx.lineTo(t.x - 15, t.y); ctx.lineTo(t.x, t.y - 45); ctx.lineTo(t.x + 15, t.y);
-        ctx.fill();
-    });
-
-    // Draw Ground
-    ctx.beginPath();
-    ctx.moveTo(terrain[0].x, terrain[0].y);
-    for (let i = 1; i < terrain.length; i++) ctx.lineTo(terrain[i].x, terrain[i].y);
-    ctx.lineTo(width, height); ctx.lineTo(0, height);
-    ctx.fillStyle = "#3e7a36"; ctx.fill();
-
-    // Draw Bike
-    ctx.save();
-    ctx.translate(bike.x, bike.y);
-    ctx.rotate(bike.rotation);
-    ctx.strokeStyle = "#222"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(0, -12); ctx.lineTo(12, 0); ctx.stroke();
-    ctx.fillStyle = "#000";
-    ctx.beginPath(); ctx.arc(-12, 0, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(12, 0, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    // Bike Dashboard / Handlebars (POV)
+    ctx.fillStyle = "#222";
+    ctx.fillRect(width/2 - 100, height - 50, 200, 50);
 }
 
-function gameLoop() {
-    updatePhysics();
-    draw();
-    requestAnimationFrame(gameLoop);
+function project(z, horizon, xOffset = 0) {
+    let scale = 100 / (z + 1);
+    let x = (width/2) + (xOffset - playerX) * scale * 100;
+    let y = horizon + (scale * 20);
+    let w = scale * 100;
+    return { x, y, w, scale };
 }
 
 function gameOver() {
     gameActive = false;
-    AudioController.stop();
     document.getElementById('ui-layer').classList.remove('hidden');
     document.getElementById('start-modal').classList.add('hidden');
     document.getElementById('gameover-modal').classList.remove('hidden');
-    document.getElementById('final-stats').innerText = `${playerName}, you rode ${Math.floor(score)}m!`;
+    document.getElementById('final-stats').innerText = `${playerName}, you covered ${Math.floor(distance)}m!`;
 }
 
-// Event Listeners
-document.getElementById('startBtn').addEventListener('click', () => {
-    let nameInput = document.getElementById('playerName').value;
-    if(nameInput) playerName = nameInput;
-    document.getElementById('display-name').innerText = playerName.toUpperCase();
-    
+// Controls Logic
+const setKey = (k, v) => keys[k] = v;
+['btnLeft', 'btnRight', 'btnGas'].forEach(id => {
+    const el = document.getElementById(id);
+    el.onpointerdown = () => setKey(id, true);
+    el.onpointerup = () => setKey(id, false);
+});
+window.onkeydown = e => setKey(e.code, true);
+window.onkeyup = e => setKey(e.code, false);
+
+document.getElementById('startBtn').onclick = () => {
+    playerName = document.getElementById('playerName').value || "Rider";
     document.getElementById('ui-layer').classList.add('hidden');
     document.getElementById('hud').style.display = 'block';
-    
-    AudioController.setup();
-    buildWorld();
+    document.getElementById('controls').style.display = 'flex';
+    Audio.init();
     gameActive = true;
-});
+};
 
-window.addEventListener('keydown', e => keys[e.code] = true);
-window.addEventListener('keyup', e => keys[e.code] = false);
-window.addEventListener('resize', () => {
-    width = canvas.width = window.innerWidth;
-    height = canvas.height = window.innerHeight;
-});
-
-// Start the loop (but physics won't run until gameActive is true)
-width = canvas.width = window.innerWidth;
-height = canvas.height = window.innerHeight;
-requestAnimationFrame(gameLoop);
-
+initGame();
 </script>
 </body>
 </html>
